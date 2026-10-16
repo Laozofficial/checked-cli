@@ -1,0 +1,47 @@
+{
+  "name": "@checked/cli",
+  "version": "0.1.0",
+  "description": "Check’d from the terminal and CI: start test runs, follow them live, read findings and AI reports.",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "checked": "dist/bin.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test .test-build/test/units.test.js .test-build/test/commands.test.js",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "checked",
+    "qa",
+    "api-testing",
+    "ci",
+    "cli"
+  ],
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "typescript": "~6.0.3"
+  }
+}
