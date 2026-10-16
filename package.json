@@ -2,8 +2,16 @@
   "name": "@checked/cli",
   "version": "0.1.0",
   "description": "Check’d from the terminal and CI: start test runs, follow them live, read findings and AI reports.",
-  "license": "UNLICENSED",
-  "private": true,
+  "license": "MIT",
+  "author": "TwelveAI (https://twelveai.app)",
+  "homepage": "https://getchecked.twelveai.app/docs/cli",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Laozofficial/checked-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Laozofficial/checked-cli/issues"
+  },
   "type": "module",
   "bin": {
     "checked": "dist/bin.js"
@@ -22,7 +30,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"
@@ -31,7 +40,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test .test-build/test/units.test.js .test-build/test/commands.test.js",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [
     "checked",
@@ -43,5 +53,8 @@
   "devDependencies": {
     "@types/node": "^20.19.0",
     "typescript": "~6.0.3"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
