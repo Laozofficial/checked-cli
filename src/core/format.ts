@@ -1,5 +1,5 @@
 import { EXIT, type ExitCode, relativeTime } from './errors.js'
-import type { AiReport, Finding, ImportPreview, RunCore, RunSummary, Usage } from './types.js'
+import type { AiReport, Finding, ImportPreview, InboxIssue, InboxIssueDetail, IssueAi, RunCore, RunSummary, Usage } from './types.js'
 
 /**
  * Plain-text renderings shared by the CLI (which adds colour through `Style`) and
@@ -185,5 +185,61 @@ export function formatPreview(p: ImportPreview, source: string, st: Style = PLAI
   }
   for (const w of p.warnings) out.push(st.yellow(`  Note: ${w}`))
   for (const pr of p.problems) out.push(st.red(`  ${pr}`))
+  return out.join('\n')
+}
+
+/* ---------- inbox issues ---------- */
+
+const SOURCE_WORD: Record<string, string> = { production: 'Production', test_run: 'Test run', site_scan: 'Website scan', load_test: 'Load test' }
+
+/** The cached explanation as text. Read-only: it never asks for a new one. */
+export function formatExplanation(ai: IssueAi | null, url: string | null, st: Style = PLAIN): string {
+  if (!ai) return `${st.bold('Explanation')}\nNo explanation yet. Open the issue in Check’d and press Explain with AI${url ? `: ${url}` : '.'}`
+  const e = ai.explanation
+  const out: string[] = []
+  const based = ai.kind === 'ai' ? `AI, from ${ai.basedOn.occurrences} ${ai.basedOn.occurrences === 1 ? 'occurrence' : 'occurrences'}${ai.basedOn.release ? ` up to release ${ai.basedOn.release}` : ''}, ${relativeTime(ai.generatedAt) ?? 'recently'}` : 'from the run that found it'
+  out.push(`${st.bold('Explanation')} ${st.dim(`(${based})`)}`)
+  if (ai.stale) out.push(st.yellow(`Newer evidence since then: ${ai.reasons.join(', ')}. Refresh it in Check’d.`))
+  out.push('', st.bold(e.summary), `Impact ${e.impact}, confidence ${e.confidence}.`)
+  out.push('', st.bold('What is broken'), e.whatIsBroken)
+  out.push('', st.bold('Likely root cause'), e.rootCause)
+  out.push('', st.bold('Who is affected'), e.whoIsAffected)
+  if (e.whereToLook.length) out.push('', st.bold('Where to look'), ...e.whereToLook.map((w) => `- ${w.file}${w.line ? `:${w.line}` : ''}${w.function ? ` (${w.function})` : ''}: ${w.why}`))
+  if (e.suggestedFix.length) out.push('', st.bold('Suggested fix'), ...e.suggestedFix.map((s, i) => `${i + 1}. ${s}`))
+  if (e.confidenceReason) out.push('', `${st.bold('How sure')}: ${e.confidenceReason}`)
+  if (e.unknowns.length) out.push('', st.bold('What would settle it'), ...e.unknowns.map((s) => `- ${s}`))
+  if (ai.source?.files.length) out.push('', st.dim(`Code read from ${ai.source.repo} at ${ai.source.label}.`))
+  else if (ai.source?.note) out.push('', st.dim(ai.source.note))
+  return out.join('\n')
+}
+
+/** One inbox issue: what, how often, for whom, the evidence summary, its fix PR; the explanation with `explain`. */
+export function formatIssue(i: InboxIssue & Partial<Omit<InboxIssueDetail, keyof InboxIssue>>, st: Style = PLAIN, opts: { explain?: boolean } = {}): string {
+  const out: string[] = []
+  out.push(`${severityText(i.severity, st)} ${st.bold(i.title)} ${st.dim(`[${i.ref}]`)}`)
+  if (i.culprit) out.push(st.dim(i.culprit))
+  const prod = i.source === 'production'
+  const facts = [
+    SOURCE_WORD[i.source] ?? i.source,
+    i.status,
+    `${i.occurrences} ${prod ? (i.occurrences === 1 ? 'time' : 'times') : i.occurrences === 1 ? 'run' : 'runs'}`,
+    prod ? `${i.usersAffected} ${i.usersAffected === 1 ? 'user' : 'users'}` : null,
+    i.firstRelease ? `first seen in ${i.firstRelease}` : null,
+    i.regressedInRelease ? `came back in ${i.regressedInRelease}` : null,
+    `last seen ${relativeTime(i.lastSeenAt) ?? 'recently'}`,
+  ].filter(Boolean)
+  out.push(facts.join(' · '))
+  const ev = i.evidence
+  if (ev) {
+    if (ev.error) out.push('', `${st.bold('Error')}: ${ev.error.type}: ${ev.error.message}`)
+    if (ev.request) out.push('', `${st.bold('Request')}: ${ev.request.method} ${ev.request.host ?? ''}${ev.request.route} answered ${ev.request.status || 'with a network error'}`)
+    if (ev.page) out.push(`${st.bold('Page')}: ${ev.page}`)
+    if (ev.frames.length) out.push('', st.bold('Stack (your code)'), ...ev.frames.slice(0, 8).map((f) => `  at ${f.fn === '?' ? '(anonymous)' : f.fn} ${f.file}${f.line ? `:${f.line}` : ''}`))
+    if (ev.breadcrumbs.length) out.push('', st.bold('Before it happened'), ...ev.breadcrumbs.slice(-8).map((b) => `  ${b.secondsBefore !== null ? `${b.secondsBefore}s before` : 'before'} [${b.type}] ${b.message}`))
+  }
+  if (i.fixPr) out.push('', `${st.bold('Fix pull request')}: ${i.fixPr.status}${i.fixPr.number ? ` #${i.fixPr.number}` : ''}${i.fixPr.url ? ` ${i.fixPr.url}` : ''}`)
+  if (opts.explain) out.push('', formatExplanation(i.explanation ?? null, i.url, st))
+  else if (i.aiSummary) out.push('', `${st.bold('AI summary')}: ${i.aiSummary}`, st.dim(`Full explanation: checked issues show ${i.ref} --explain`))
+  out.push('', st.dim(i.url))
   return out.join('\n')
 }

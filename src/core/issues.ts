@@ -1,27 +1,46 @@
 import type { CheckedClient } from './client.js'
-import type { Capabilities, Finding, Severity } from './types.js'
+import type { Capabilities, Finding, InboxIssue, InboxIssueDetail, Severity } from './types.js'
 
 /**
  * The seam between the tools and wherever issues come from.
  *
- * Today an issue is a finding from the latest test run: a failed API test or a
- * website scan finding (GET /cli/projects/:id/findings). A production issue inbox
- * (errors reported by the in-app SDK plus test findings, with status and
- * occurrences) is being built; when the server ships it, it advertises
- * `capabilities.issuesInbox: true` in /cli/whoami, and `issuesProvider()` is the
- * one place that switches to it. The CLI's `issues` commands and the MCP issue
- * tools only ever talk to an IssuesProvider, so nothing else changes.
+ * Two providers:
+ *   findings  a finding from the latest (or a given) test run: a failed API test or a website
+ *             scan finding (GET /cli/projects/:id/findings). Ids look like r123 or f456.
+ *   inbox     the unified issue inbox: errors real users hit in production (from the SDK) and
+ *             test findings, with status, occurrences, users and the cached AI explanation
+ *             (GET /cli/projects/:id/issues, GET /cli/issues/:ref). Ids are issue refs.
+ *
+ * Servers that have the inbox advertise `capabilities.issuesInbox: true` in /cli/whoami and
+ * `issuesProvider()` picks the inbox there. The CLI's `issues` commands and the MCP issue tools
+ * only ever talk to an IssuesProvider; `findings` commands always use the findings provider.
+ * The inbox provider still answers finding ids (r123, f456) and run-scoped lists through the
+ * findings provider, so older scripts keep working.
  */
-export type Issue = Finding & {
-  /** Where the issue was seen: 'test' today; the inbox adds 'production'. */
+export type FindingIssue = Finding & {
+  /** Where the issue was seen. */
   origin: 'test' | 'production'
   /** How many times it was seen (1 for a single test finding). */
   occurrences: number
+  inbox?: false
 }
 
-export type IssueQuery = { projectId: string | number; runId?: string | number; severity?: Severity; limit?: number }
+export type InboxIssueRow = InboxIssue & {
+  origin: 'test' | 'production'
+  /** Inbox issues are not tied to one endpoint; kept so lists render both kinds alike. */
+  endpoint: null
+  inbox: true
+}
 
-export type IssueList = { issues: Issue[]; total: number; scope: { kind: 'run'; runId: number; runRef: string | null; status: string; url: string } | { kind: 'none' } | { kind: 'inbox' } }
+export type Issue = FindingIssue | InboxIssueRow
+
+export type IssueQuery = { projectId: string | number; runId?: string | number; severity?: Severity; limit?: number; status?: string; source?: string }
+
+export type IssueList = {
+  issues: Issue[]
+  total: number
+  scope: { kind: 'run'; runId: number; runRef: string | null; status: string; url: string } | { kind: 'none' } | { kind: 'inbox'; url?: string }
+}
 
 export interface IssuesProvider {
   readonly name: 'findings' | 'inbox'
@@ -29,8 +48,25 @@ export interface IssuesProvider {
   show(id: string): Promise<Issue & Record<string, unknown>>
 }
 
-export function issueFromFinding(f: Finding): Issue {
+export function issueFromFinding(f: Finding): FindingIssue {
   return { ...f, origin: 'test', occurrences: 1 }
+}
+
+export function issueFromInbox<T extends InboxIssue>(i: T): T & InboxIssueRow {
+  return { ...i, origin: i.source === 'production' ? 'production' : 'test', endpoint: null, inbox: true }
+}
+
+export const isInboxIssue = (i: Issue): i is InboxIssueRow => i.inbox === true
+
+/** Finding ids (r123, f456, or digits) as opposed to inbox refs (letters). */
+export const FINDING_ID = /^[rf]?\d+$/i
+
+const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low', 'info']
+/** "high" means high and worse, as with findings: the inbox takes the list. */
+export function severityAndWorse(s?: Severity): string | undefined {
+  if (!s) return undefined
+  const i = SEVERITIES.indexOf(s)
+  return i < 0 ? undefined : SEVERITIES.slice(0, i + 1).join(',')
 }
 
 /** Issues backed by the existing findings API: the latest (or a given) run's problems. */
@@ -54,11 +90,29 @@ export class FindingsIssuesProvider implements IssuesProvider {
   }
 }
 
-/**
- * Picks the provider for this server. Only the findings provider exists today;
- * an InboxIssuesProvider (GET /cli/projects/:id/issues, GET /cli/issues/:id) slots
- * in here when `capabilities.issuesInbox` is true.
- */
-export function issuesProvider(client: CheckedClient, _capabilities?: Capabilities | null): IssuesProvider {
-  return new FindingsIssuesProvider(client)
+/** Issues from the unified inbox: production errors and test findings, open first by impact. */
+export class InboxIssuesProvider implements IssuesProvider {
+  readonly name = 'inbox' as const
+  private readonly findings: FindingsIssuesProvider
+  constructor(private readonly client: CheckedClient) {
+    this.findings = new FindingsIssuesProvider(client)
+  }
+
+  async list(q: IssueQuery): Promise<IssueList> {
+    // A run's problems are still its findings.
+    if (q.runId !== undefined) return this.findings.list(q)
+    const page = await this.client.projectIssues(q.projectId, { status: q.status, source: q.source, severity: severityAndWorse(q.severity), limit: q.limit })
+    return { issues: page.data.map((i) => issueFromInbox(i)), total: page.meta?.total ?? page.data.length, scope: { kind: 'inbox', url: page.meta?.url } }
+  }
+
+  async show(id: string): Promise<Issue & Record<string, unknown>> {
+    if (FINDING_ID.test(id)) return this.findings.show(id)
+    const d: InboxIssueDetail = await this.client.issue(id)
+    return issueFromInbox(d) as InboxIssueRow & Record<string, unknown>
+  }
+}
+
+/** Picks the provider for this server: the inbox when it advertises one, else findings. */
+export function issuesProvider(client: CheckedClient, capabilities?: Capabilities | null): IssuesProvider {
+  return capabilities?.issuesInbox ? new InboxIssuesProvider(client) : new FindingsIssuesProvider(client)
 }

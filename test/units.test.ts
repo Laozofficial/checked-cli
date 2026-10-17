@@ -9,8 +9,8 @@ import { ApiError, ArgError, EXIT, UsageLimitError, exitCodeFor, relativeTime, u
 import { toApiError, CheckedClient } from '../src/core/client.js'
 import { normalizeApiUrl, resolveCredential, resolveApiUrl, writeConfig, readConfig, clearConfigToken, configPath, maskToken, DEFAULT_API_URL } from '../src/core/config.js'
 import { SseParser } from '../src/core/sse.js'
-import { runOutcome, formatSummary, formatUsage, money, formatFinding } from '../src/core/format.js'
-import { issuesProvider } from '../src/core/issues.js'
+import { runOutcome, formatSummary, formatUsage, money, formatFinding, formatIssue } from '../src/core/format.js'
+import { issuesProvider, severityAndWorse } from '../src/core/issues.js'
 import { VERSION } from '../src/version.js'
 import { mockFetch, summary, tempConfigDir } from './helpers.js'
 
@@ -174,7 +174,7 @@ test('summary, usage and finding text', () => {
   assert.match(f, /http:\/\/app.test\/run$/)
 })
 
-test('issues come through the findings provider for now', async () => {
+test('issues come through the findings provider when the server has no inbox', async () => {
   const { fetch, calls } = mockFetch((c) => (c.path === '/cli/projects/pay/findings' ? { body: { data: [{ id: 'f1', severity: 'high', title: 'Broken link' }], meta: { run: { id: 7, ref: 'r', kind: 'frontend_health', status: 'failed', finishedAt: null, url: 'u' }, total: 1 } } } : undefined))
   const p = issuesProvider(new CheckedClient({ apiUrl: 'http://api.test', token: 't', fetch }))
   assert.equal(p.name, 'findings')
@@ -188,4 +188,47 @@ test('issues come through the findings provider for now', async () => {
 test('version matches package.json', () => {
   const pkg = JSON.parse(readFileSync(join(here, '..', '..', 'package.json'), 'utf8'))
   assert.equal(pkg.version, VERSION)
+})
+
+const INBOX_ISSUE = { id: 'kqzxmvbt', ref: 'kqzxmvbt', source: 'production', kind: 'error', severity: 'high', status: 'regressed', title: "TypeError: Cannot read properties of undefined (reading 'amount')", culprit: 'formatTotal in /src/cart/CartTotal.tsx line 42', errorType: 'TypeError', environment: 'production', occurrences: 46, usersAffected: 23, firstSeenAt: '2026-10-01T10:00:00Z', lastSeenAt: '2026-10-16T10:00:00Z', firstRelease: '1.4.0', lastRelease: '1.4.2', regressedInRelease: '1.4.2', explained: true, aiSummary: 'Checkout crashes after a promo code', hasFixPr: true, projectId: 3, url: 'http://app.test/projects/shop-abcde/issues/kqzxmvbt' } as const
+const EXPLANATION = { kind: 'ai', explanation: { summary: 'Checkout crashes after a promo code', whatIsBroken: 'Pay fails.', rootCause: 'total is read before it loads.', whoIsAffected: '23 users.', impact: 'critical', whereToLook: [{ file: 'src/cart/CartTotal.tsx', line: 42, function: 'formatTotal', why: 'No guard.' }], suggestedFix: ['Guard the total.'], confidence: 'high', confidenceReason: 'The frame shows it.', unknowns: [] }, basedOn: { occurrences: 43, usersAffected: 23, release: '1.4.2', at: '2026-10-16T08:00:00Z' }, source: { repo: 'acme/shop', ref: 'f3a91c2', label: 'tag v1.4.2', note: null, files: [{ path: 'src/cart/CartTotal.tsx', start: 22, end: 62 }] }, model: 'm', generatedAt: '2026-10-16T08:00:00Z', stale: true, newOccurrences: 3, reasons: ['3 new occurrences'] }
+
+test('with the inbox capability, issues come from the inbox; finding ids and run lists still work', async () => {
+  const { fetch, calls } = mockFetch((c) => {
+    if (c.path === '/cli/projects/shop/issues') return { body: { data: [INBOX_ISSUE], meta: { total: 1, url: 'http://app.test/projects/shop/issues' } } }
+    if (c.path === '/cli/issues/kqzxmvbt') return { body: { data: { ...INBOX_ISSUE, evidence: { error: null, frames: [], request: null, page: null, breadcrumbs: [] }, explanation: EXPLANATION, fixPr: null } } }
+    if (c.path === '/cli/findings/r12') return { body: { data: { id: 'r12', severity: 'high', title: 'A failed test' } } }
+    if (c.path === '/cli/projects/shop/findings') return { body: { data: [], meta: { run: { id: 7, ref: 'r', kind: 'suite', status: 'passed', finishedAt: null, url: 'u' }, total: 0 } } }
+    return undefined
+  })
+  const p = issuesProvider(new CheckedClient({ apiUrl: 'http://api.test', token: 't', fetch }), { issuesInbox: true })
+  assert.equal(p.name, 'inbox')
+  const list = await p.list({ projectId: 'shop', severity: 'high', status: 'all' })
+  assert.equal(list.scope.kind, 'inbox')
+  assert.equal(list.issues[0].id, 'kqzxmvbt')
+  assert.equal(list.issues[0].origin, 'production')
+  assert.equal(calls[0].query.get('severity'), 'critical,high')
+  assert.equal(calls[0].query.get('status'), 'all')
+  const one = await p.show('kqzxmvbt')
+  assert.equal((one as any).explanation.explanation.impact, 'critical')
+  assert.equal((await p.show('r12')).id, 'r12')
+  assert.equal((await p.list({ projectId: 'shop', runId: 7 })).scope.kind, 'run')
+  assert.equal(severityAndWorse('medium'), 'critical,high,medium')
+  assert.equal(severityAndWorse(undefined), undefined)
+})
+
+test('issue text: facts, AI summary hint, and the explanation only with explain', () => {
+  const plain = formatIssue({ ...INBOX_ISSUE, explanation: EXPLANATION as any })
+  assert.match(plain, /Production · regressed · 46 times · 23 users · first seen in 1\.4\.0 · came back in 1\.4\.2/)
+  assert.match(plain, /AI summary: Checkout crashes after a promo code/)
+  assert.match(plain, /checked issues show kqzxmvbt --explain/)
+  assert.doesNotMatch(plain, /Likely root cause/)
+  const full = formatIssue({ ...INBOX_ISSUE, explanation: EXPLANATION as any }, undefined, { explain: true })
+  assert.match(full, /Explanation \(AI, from 43 occurrences up to release 1\.4\.2/)
+  assert.match(full, /Newer evidence since then: 3 new occurrences/)
+  assert.match(full, /- src\/cart\/CartTotal\.tsx:42 \(formatTotal\): No guard\./)
+  assert.match(full, /Code read from acme\/shop at tag v1\.4\.2\./)
+  assert.doesNotMatch(full, new RegExp(String.fromCharCode(0x2014)))
+  const none = formatIssue({ ...INBOX_ISSUE, explanation: null }, undefined, { explain: true })
+  assert.match(none, /No explanation yet\. Open the issue in Check’d and press Explain with AI: http:\/\/app\.test/)
 })

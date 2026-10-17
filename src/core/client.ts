@@ -6,6 +6,8 @@ import type {
   EnvironmentRow,
   Finding,
   FindingsPage,
+  InboxIssueDetail,
+  InboxPage,
   ImportPreview,
   ImportSaved,
   LiveEvent,
@@ -205,6 +207,15 @@ export class CheckedClient {
   }
   finding(id: string) {
     return this.get<Finding & Record<string, unknown>>(`/cli/findings/${enc(id)}`)
+  }
+
+  /* the issue inbox (needs capabilities.issuesInbox) */
+  projectIssues(projectId: string | number, opts: { status?: string; source?: string; severity?: string; q?: string; fixPr?: boolean; sort?: string; limit?: number } = {}) {
+    const { fixPr, ...rest } = opts
+    return this.request<InboxPage>('GET', `/cli/projects/${enc(projectId)}/issues`, { query: { ...rest, fixPr: fixPr ? 1 : undefined }, raw: true })
+  }
+  issue(ref: string) {
+    return this.get<InboxIssueDetail>(`/cli/issues/${enc(ref)}`)
   }
 
   /* usage */
