@@ -1,5 +1,5 @@
 {
-  "name": "@checked/cli",
+  "name": "checkd-cli",
   "version": "0.1.0",
   "description": "Check’d from the terminal and CI: start test runs, follow them live, read findings and AI reports.",
   "license": "MIT",

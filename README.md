@@ -1,11 +1,11 @@
-# @checked/cli
+# checkd-cli
 
 `checked` runs Check’d from your terminal and CI: import API docs, start runs, follow them live, read the AI report and findings, and fail the build when a run misses its release gates.
 
 Needs Node.js 20 or newer. No runtime dependencies.
 
 ```sh
-npm install -g @checked/cli
+npm install -g checkd-cli
 checked login            # approve a code in the browser; saved for 90 days
 checked projects list
 ```
@@ -84,7 +84,7 @@ jobs:
       - name: Run the Check’d tests
         env:
           CHECKED_API_KEY: ${{ secrets.CHECKED_API_KEY }}
-        run: npx -y @checked/cli run --project payments-kqzxm --depth critical --timeout 20m
+        run: npx -y checkd-cli run --project payments-kqzxm --depth critical --timeout 20m
 ```
 
 GitLab CI (set `CHECKED_API_KEY` as a masked CI/CD variable):
@@ -93,7 +93,7 @@ GitLab CI (set `CHECKED_API_KEY` as a masked CI/CD variable):
 checked:
   image: node:20
   script:
-    - npx -y @checked/cli run --project payments-kqzxm --depth critical --timeout 20m
+    - npx -y checkd-cli run --project payments-kqzxm --depth critical --timeout 20m
 ```
 
 Defect gates can change when the AI report lands about a minute after the run; add `--wait-report 2m` to judge after it.
@@ -105,7 +105,7 @@ Defect gates can change when the AI report lands about a minute after the run; a
 ## Using the core in scripts
 
 ```ts
-import { CheckedClient, waitForRun, runOutcome } from '@checked/cli/core'
+import { CheckedClient, waitForRun, runOutcome } from 'checkd-cli/core'
 const client = new CheckedClient({ apiUrl: 'https://getchecked.twelveai.app', token: process.env.CHECKED_API_KEY })
 const run = await client.startRun('payments-kqzxm', { depth: 'critical' })
 await waitForRun(client, run.id, { timeoutMs: 20 * 60_000 })

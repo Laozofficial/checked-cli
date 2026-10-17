@@ -1,7 +1,7 @@
 /**
  * The reusable core of the Check’d developer tools: API client, credentials,
  * errors and exit codes, text formatting, run waiting and the issues seam.
- * The MCP server (@checked/mcp) is built on this; so can your own scripts.
+ * The MCP server (checkd-mcp) is built on this; so can your own scripts.
  */
 export * from './errors.js'
 export * from './config.js'

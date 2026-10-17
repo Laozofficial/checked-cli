@@ -17,11 +17,11 @@ const mcpCommand: Command = {
     const text = [
       'The Check’d MCP server is a separate package, so this CLI stays small:',
       '',
-      '  claude mcp add checked --env CHECKED_API_KEY=tfy_... -- npx -y @checked/mcp',
+      '  claude mcp add checked --env CHECKED_API_KEY=tfy_... -- npx -y checkd-mcp',
       '',
       'Cursor and VS Code use the same command; see https://getchecked.twelveai.app/docs/mcp',
     ].join('\n')
-    ctx.out.result({ package: '@checked/mcp', command: 'npx -y @checked/mcp', docs: 'https://getchecked.twelveai.app/docs/mcp' }, () => text)
+    ctx.out.result({ package: 'checkd-mcp', command: 'npx -y checkd-mcp', docs: 'https://getchecked.twelveai.app/docs/mcp' }, () => text)
   },
 }
 
