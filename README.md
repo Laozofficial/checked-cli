@@ -36,7 +36,7 @@ checked scan <url> [--workspace slug] [--project ref] [--max-pages n] [--no-wait
 checked runs list --project ref | show <run> | watch <run> | report <run> [--open] | results <run> [--status failed]
 checked runs rerun-failed <run> [--yes] | cancel <run>
 checked findings list --project ref [--run ref] [--severity high] | show <id>
-checked issues list | show            (today the same data as findings, see below)
+checked issues list --project ref [--status open] [--source production] | show <ref> [--explain]
 checked usage [--workspace slug]
 checked open [run] [--project ref] [--print]
 checked mcp                            (how to add the MCP server)
@@ -100,7 +100,7 @@ Defect gates can change when the AI report lands about a minute after the run; a
 
 ## Issues and the inbox seam
 
-`checked issues` and `checked findings` both go through an `IssuesProvider` (`src/core/issues.ts`). Today the only provider reads `GET /api/v1/cli/projects/:id/findings` (the latest run’s failed tests and scan findings). When the server ships the production issue inbox it will report `capabilities.issuesInbox: true` from `/cli/whoami`; `issuesProvider()` is the one place that then returns an inbox provider, and the `issues` commands and MCP issue tools follow without other changes.
+`checked issues` and `checked findings` both go through an `IssuesProvider` (`src/core/issues.ts`). `findings` always read `GET /api/v1/cli/projects/:id/findings` (the latest run’s failed tests and scan findings). Servers with the issue inbox report `capabilities.issuesInbox: true` from `/cli/whoami`, and `issues` then read `GET /api/v1/cli/projects/:id/issues` and `GET /api/v1/cli/issues/:ref`: production errors from the SDK and test findings, with status, occurrences, users and the one-line AI summary. `checked issues show <ref> --explain` prints the cached AI explanation (what is broken, likely cause, where to look, suggested fix); it is read-only and never starts a new one. Finding ids (r123, f456) and `--run` still work under `issues`.
 
 ## Using the core in scripts
 

@@ -273,3 +273,38 @@ test('rerun-failed reports what changed; not found is exit 6', async () => {
   const n = await runCli(['runs', 'show', 'nope'], { fetch, env: KEY })
   assert.equal(n.code, 6)
 })
+
+test('issues on a server with the inbox: list, show and --explain, read-only', async () => {
+  const issue = { id: 'kqzxmvbt', ref: 'kqzxmvbt', source: 'production', kind: 'error', severity: 'critical', status: 'new', title: 'TypeError: total is undefined', culprit: 'formatTotal in /src/cart/CartTotal.tsx line 42', errorType: 'TypeError', environment: 'production', occurrences: 12, usersAffected: 5, firstSeenAt: '2026-10-10T10:00:00Z', lastSeenAt: '2026-10-16T10:00:00Z', firstRelease: '1.4.2', lastRelease: '1.4.2', regressedInRelease: null, explained: true, aiSummary: 'Checkout crashes after a promo code', hasFixPr: false, projectId: 3, url: 'http://app.test/projects/pay-abcde/issues/kqzxmvbt' }
+  const explanation = { kind: 'ai', explanation: { summary: 'Checkout crashes after a promo code', whatIsBroken: 'Pay fails.', rootCause: 'total read too early.', whoIsAffected: '5 users.', impact: 'high', whereToLook: [], suggestedFix: ['Guard it.'], confidence: 'medium', confidenceReason: 'Frames.', unknowns: [] }, basedOn: { occurrences: 12, usersAffected: 5, release: '1.4.2', at: '2026-10-16T09:00:00Z' }, source: null, model: 'm', generatedAt: '2026-10-16T09:00:00Z', stale: false, newOccurrences: 0, reasons: [] }
+  const evidence = { error: { type: 'TypeError', message: 'total is undefined', handled: false, mechanism: 'onerror' }, frames: [{ fn: 'formatTotal', file: '/src/cart/CartTotal.tsx', line: 42, column: 7 }], request: null, page: '/checkout/:id', breadcrumbs: [{ secondsBefore: 0.9, type: 'click', message: 'button Checkout' }] }
+  const { fetch, calls } = mockFetch((c) => {
+    if (c.path === '/cli/whoami') return { body: { data: { kind: 'key', capabilities: { issuesInbox: true }, workspaces: [] } } }
+    if (c.path === '/cli/projects/pay-abcde/issues') return { body: { data: [issue], meta: { total: 1, url: 'http://app.test/projects/pay-abcde/issues' } } }
+    if (c.path === '/cli/issues/kqzxmvbt') return { body: { data: { ...issue, evidence, explanation, fixPr: null } } }
+    return undefined
+  })
+  const l = await runCli(['issues', 'list', '-p', 'pay-abcde', '--source', 'production'], { fetch, env: KEY })
+  assert.equal(l.code, 0, l.stderr)
+  assert.match(l.stdout, /kqzxmvbt\s+critical\s+new\s+12x, 5u\s+TypeError: total is undefined \(explained\)/)
+  assert.equal(calls.find((c) => c.path.endsWith('/issues'))!.query.get('source'), 'production')
+  const s = await runCli(['issues', 'show', 'kqzxmvbt'], { fetch, env: KEY })
+  assert.equal(s.code, 0, s.stderr)
+  assert.match(s.stdout, /at formatTotal \/src\/cart\/CartTotal\.tsx:42/)
+  assert.match(s.stdout, /0\.9s before \[click\] button Checkout/)
+  assert.match(s.stdout, /AI summary: Checkout crashes after a promo code/)
+  assert.doesNotMatch(s.stdout, /Likely root cause/)
+  const e = await runCli(['issues', 'show', 'kqzxmvbt', '--explain'], { fetch, env: KEY })
+  assert.match(e.stdout, /Likely root cause\ntotal read too early\./)
+  assert.match(e.stdout, /1\. Guard it\./)
+  const j = await runCli(['issues', 'show', 'kqzxmvbt', '--json'], { fetch, env: KEY })
+  assert.equal(JSON.parse(j.stdout).explanation.explanation.impact, 'high')
+  // Read-only: nothing but GETs.
+  assert.ok(calls.every((c) => c.method === 'GET'))
+  const bad = await runCli(['issues', 'list', '-p', 'pay-abcde', '--status', 'closed'], { fetch, env: KEY })
+  assert.equal(bad.code, 64)
+  // `findings` never switches to the inbox.
+  const f = await runCli(['findings', 'list', '-p', 'pay-abcde'], { fetch, env: KEY })
+  assert.ok(calls.some((c) => c.path === '/cli/projects/pay-abcde/findings'))
+  assert.notEqual(f.code, 0)
+})
